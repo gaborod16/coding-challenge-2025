@@ -125,7 +125,7 @@ fun main(args : Array<String>) {
         }
 
         val myAgentCount = input.nextInt() // Number of alive agents controlled by you (not used val myAgentCount)
-        System.err.println("My agent Count = $myAgentCount == ${myAgents.entries.filter { it.value.isAlive(roundNumber) }.count() }")
+        System.err.println("My agent Count = $myAgentCount == ${myAgents.entries.count { it.value.isAlive(roundNumber) }}")
 
         // Game objectives:
         val shootTargetAgent: Agent = theirAgents.values.filter { it.isAlive(roundNumber) }.maxBy { it.wetness }
