@@ -63,12 +63,63 @@ object TargetFinder {
             ).also { System.err.println("Agents sorted: ${it.map { it.position }}") }
             .first()
     }
+
+    fun Agent.targetCover(target: Agent, targetAvailableCovers: List<CoverForAgent>): Tile {
+        val myPosition = this.position
+        val targetPosition = target.position
+
+        val effectiveCovers = this.effectiveCovers(targetAvailableCovers, target)
+        // cover value, get max
+        // return value
+
+        // then later compare to see which target has lower cover value
+    }
+
+    fun Agent.effectiveCovers(covers: List<CoverForAgent>, target: Agent): List<CoverForAgent> {
+        val normalisedDifference = this.position!!
+            .subtract(target.position!!)
+            .normalise()
+
+        val effectiveCovers = covers.filter {
+            it.tile.position == target.position!!.subtractX(normalisedDifference)
+                    || it.tile.position == target.position!!.subtractY(normalisedDifference)
+        }
+
+        effectiveCovers.filter {
+            it.tile.position.distanceFrom(this.position!!) > sqrt(2.0)
+        }
+        return effectiveCovers
+    }
 }
 
 data class Position(
     val x: Int,
     val y: Int,
-)
+) {
+    fun subtractX(other: Position): Position = Position(this.x - other.x, this.y)
+
+    fun subtractY(other: Position): Position = Position(this.x, this.y - other.y)
+
+    fun subtract(other: Position): Position = Position(this.x - other.x, this.y - other.y)
+
+    fun distanceFrom(other: Position): Double = sqrt(
+        (this.x - other.x).toDouble().pow(2)  + (this.y - other.y).toDouble().pow(2)
+    )
+
+    fun normalise(): Position = Position(
+        normaliseCoordinate(this.x),
+        normaliseCoordinate(this.y),
+    )
+
+    companion object {
+        fun normaliseCoordinate(coordinate: Int) =
+            when {
+                coordinate > 1 -> 1
+                coordinate < -1 -> -1
+                else -> 0
+            }
+    }
+}
 
 enum class AgentStatus {
     ALIVE,
