@@ -29,50 +29,76 @@ object DistanceCalculator {
     }
 
     fun distanceBetweenAgents(a1: Agent, a2: Agent): Int {
-        return DistanceCalculator.distanceBetween(a1.position!!, a2.position!!)
+        return distanceBetween(a1.position!!, a2.position!!)
     }
 }
 
 object TargetFinder {
-    fun closestTarget(agent: Agent, enemies: Collection<Agent>): Agent {
+    const val BOMB_RANGE = 4
+
+    fun getClosestEnemy(agent: Agent, enemies: Collection<Agent>): Agent? {
         return enemies
             .filter { it.isAlive() }
-            .sortedWith(
-                compareBy
-                { DistanceCalculator.distanceBetweenAgents(agent, it) },
-            ).first()
+            .minByOrNull { DistanceCalculator.distanceBetweenAgents(agent, it) }
     }
 
-    fun wettestTarget(agent: Agent, enemies: Collection<Agent>): Agent {
+    fun getTargetToShoot(agent: Agent, enemies: Collection<Agent>, battlefieldMap: BattlefieldMap): Agent {
+        System.err.println("Agent[${agent.agentId}] position: ${agent.position}")
         return enemies
-            .filter { it.isAlive() }
-            .sortedWith(
-                compareBy
-                { it.wetness },
-            ).first()
-    }
-
-    fun closestUncoveredTarget(agent: Agent, enemies: Collection<Agent>, battlefieldMap: BattlefieldMap, ): Agent {
-        return enemies
+            .filter { agent.optimalRange <= DistanceCalculator.distanceBetweenAgents(agent, it) }
             .filter { it.isAlive() }
             .sortedWith(
                 compareBy(
-                    { DistanceCalculator.distanceBetweenAgents(agent, it) },
-                    { battlefieldMap.findCoversForAgent(it, 1).count() },
+//                    { targetWetness(it) },
+                    { targetCoverLevel(agent, it, battlefieldMap) },
+                    { targetDistance(agent, it) },
                 )
-            ).also { System.err.println("Agents sorted: ${it.map { it.position }}") }
+            )
             .first()
     }
 
-    fun Agent.targetCover(target: Agent, targetAvailableCovers: List<CoverForAgent>): Tile {
-        val myPosition = this.position
-        val targetPosition = target.position
+    fun getTargetToBomb(agent: Agent, enemies: Collection<Agent>, battlefieldMap: BattlefieldMap): Position? {
+        System.err.println("Agent[${agent.agentId}] position: ${agent.position}")
+        if (agent.splashBombs < 1) return null
 
+        val validEnemies = enemies
+            .filter { DistanceCalculator.distanceBetweenAgents(agent, it) <= BOMB_RANGE + 1 }
+            .filter { it.isAlive() }
+            .also { System.err.println("Agent[${agent.agentId}] validEnemies: ${it}") }
+
+        val validEnemiesPositions = validEnemies.map { it.position }.toSet()
+
+        return validEnemies
+            .map {
+                BombArea(
+                    it.position!!,
+                    battlefieldMap.getAdjacentPositionsTo(it.position!!, true)
+                        .toSet()
+                        .plus(it.position!!)
+                )
+            }
+            .map { Pair(it, it.affectedPositions.count { it in validEnemiesPositions }) }
+            .filter { it.second >= 2 }
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .firstOrNull()?.center
+            .also { System.err.println("Agent[${agent.agentId}] bomb center: $it") }
+    }
+
+    fun targetDistance(a1: Agent, a2: Agent): Comparable<Int> = DistanceCalculator.distanceBetweenAgents(a1, a2)
+
+    fun targetWetness(agent: Agent): Comparable<Int> = agent.wetness
+
+    fun targetCoverLevel(a1: Agent, a2: Agent, map: BattlefieldMap): Comparable<Int> {
+        return (a1
+            .bestCover(
+                a2, map.findCoversForAgent(a2, 1)
+            )?.type ?: 0)
+    }
+
+    fun Agent.bestCover(target: Agent, targetAvailableCovers: List<CoverForAgent>): Tile? {
         val effectiveCovers = this.effectiveCovers(targetAvailableCovers, target)
-        // cover value, get max
-        // return value
-
-        // then later compare to see which target has lower cover value
+        return effectiveCovers.maxByOrNull { it.tile.type }?.tile
     }
 
     fun Agent.effectiveCovers(covers: List<CoverForAgent>, target: Agent): List<CoverForAgent> {
@@ -81,8 +107,8 @@ object TargetFinder {
             .normalise()
 
         val effectiveCovers = covers.filter {
-            it.tile.position == target.position!!.subtractX(normalisedDifference)
-                    || it.tile.position == target.position!!.subtractY(normalisedDifference)
+            it.tile.position == target.position!!.plusX(normalisedDifference)
+                    || it.tile.position == target.position!!.plusY(normalisedDifference)
         }
 
         effectiveCovers.filter {
@@ -92,18 +118,23 @@ object TargetFinder {
     }
 }
 
+data class BombArea(
+    val center: Position,
+    val affectedPositions: Set<Position>,
+)
+
 data class Position(
     val x: Int,
     val y: Int,
 ) {
-    fun subtractX(other: Position): Position = Position(this.x - other.x, this.y)
+    fun plusX(other: Position): Position = Position(this.x + other.x, this.y)
 
-    fun subtractY(other: Position): Position = Position(this.x, this.y - other.y)
+    fun plusY(other: Position): Position = Position(this.x, this.y + other.y)
 
     fun subtract(other: Position): Position = Position(this.x - other.x, this.y - other.y)
 
     fun distanceFrom(other: Position): Double = sqrt(
-        (this.x - other.x).toDouble().pow(2)  + (this.y - other.y).toDouble().pow(2)
+        (this.x - other.x).toDouble().pow(2) + (this.y - other.y).toDouble().pow(2)
     )
 
     fun normalise(): Position = Position(
@@ -170,16 +201,31 @@ class BattlefieldMap(
 
     private fun Tile.getAdjacentTiles(): List<Tile> = position.getAdjacentTiles()
 
-    private fun Position.getAdjacentTiles(): List<Tile> =
+    fun getAdjacentPositionsTo(position: Position, withDiagonals: Boolean = false): List<Position> =
+        position.getAdjacentTiles(withDiagonals).map { it.position }
+
+    private fun Position.getAdjacentTiles(withDiagonals: Boolean = false): List<Tile> =
         buildList<Tile>() {
-            if (x - 1 > 0) add(Position(x - 1, y).getTile())
-            if (x + 1 < width) add(Position(x + 1, y).getTile())
+            if (x - 1 > 0) {
+                add(Position(x - 1, y).getTile())
+                if (withDiagonals) {
+                    if (y + 1 < height) add(Position(x - 1, y + 1).getTile())
+                    if (y - 1 > 0) add(Position(x - 1, y - 1).getTile())
+                }
+            }
+            if (x + 1 < width) {
+                add(Position(x + 1, y).getTile())
+                if (withDiagonals) {
+                    if (y + 1 < height) add(Position(x + 1, y + 1).getTile())
+                    if (y - 1 > 0) add(Position(x + 1, y - 1).getTile())
+                }
+            }
             if (y - 1 > 0) add(Position(x, y - 1).getTile())
             if (y + 1 < height) add(Position(x, y + 1).getTile())
         }
 
     fun findCoversForAgent(agent: Agent, maxDistance: Int = 3): List<CoverForAgent> {
-//        System.err.println("Call findCoverForAgent, Agent Position -> ${agent.position}")
+        //        System.err.println("Call findCoverForAgent, Agent Position -> ${agent.position}")
         fun isValidAdjacentTile(tile: Tile, seenTiles: Set<Tile>): Boolean {
             val result = when {
                 tile in seenTiles -> false
@@ -288,14 +334,24 @@ fun main(args: Array<String>) {
                 // To debug: System.err.println("Debug messages...");
                 val commands: MutableList<String> = mutableListOf<String>()
 
-                val bestCover = battlefieldMap.findCoversForAgent(agent).first()
-                val bestTarget = TargetFinder.closestUncoveredTarget(
+//                val bestMove = battlefieldMap.findCoversForAgent(agent).first()
+                val bestMove = TargetFinder.getClosestEnemy(
+                    agent = agent,
+                    enemies = theirAgents.values,
+                )?.position
+                val bestTarget = TargetFinder.getTargetToShoot(
                     agent = agent,
                     enemies = theirAgents.values,
                     battlefieldMap = battlefieldMap,
                 )
-                commands.add(Commander.commandMove(bestCover.tile.position))
-                commands.add(Commander.commandShoot(bestTarget.agentId))
+                val bestTargetBomb = TargetFinder.getTargetToBomb(
+                    agent = agent,
+                    enemies = theirAgents.values,
+                    battlefieldMap = battlefieldMap,
+                )
+                if (bestMove != null) commands.add(Commander.commandMove(bestMove))
+                //commands.add(Commander.commandShoot(bestTarget.agentId))
+                if (bestTargetBomb != null) commands.add(Commander.commandThrow(bestTargetBomb))
 
                 println(Commander.commandAgent(agent.agentId, *commands.toTypedArray()))
             }
